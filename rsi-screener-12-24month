@@ -1,0 +1,72 @@
+import yfinance as yf
+import pandas as pd
+import numpy as np
+
+# List of tickers to track (Example: S&P 500 or a custom list)
+# For a full scan, you'd pull a CSV of all NASDAQ/NYSE tickers
+TICKERS = ["AAPL", "MSFT", "TSLA", "XOM", "JPM", "GE", "F", "INTC", "PFE"] 
+
+def calculate_rsi(series, period):
+    delta = series.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
+
+def run_tracker():
+    results = []
+    
+    print(f"Scanning {len(TICKERS)} stocks...")
+    
+    for ticker_symbol in TICKERS:
+        try:
+            ticker = yf.Ticker(ticker_symbol)
+            # Fetch 3 years of data to ensure we have enough for a 2-year (504 day) RSI
+            df = ticker.history(period="3y")
+            
+            if len(df) < 504:
+                continue
+
+            # Calculate RSIs
+            rsi_1y = calculate_rsi(df['Close'], 252).iloc[-1]
+            rsi_2y = calculate_rsi(df['Close'], 504).iloc[-1]
+            
+            # Get Industry Info
+            info = ticker.info
+            industry = info.get('industry', 'Unknown')
+            sector = info.get('sector', 'Unknown')
+            
+            results.append({
+                "Ticker": ticker_symbol,
+                "Sector": sector,
+                "Industry": industry,
+                "RSI_1Y": round(rsi_1y, 2),
+                "RSI_2Y": round(rsi_2y, 2)
+            })
+        except Exception as e:
+            print(f"Error scanning {ticker_symbol}: {e}")
+
+    # Convert to DataFrame
+    main_df = pd.DataFrame(results)
+
+    # --- INDIVIDUAL STOCK ALERTS ---
+    stock_alerts = main_df[(main_df['RSI_1Y'] <= 25) | (main_df['RSI_2Y'] <= 25)]
+
+    # --- INDUSTRY SEGMENT ALERTS ---
+    industry_alerts = main_df.groupby('Industry').agg({
+        'RSI_1Y': 'mean',
+        'RSI_2Y': 'mean',
+        'Ticker': 'count'
+    }).reset_index()
+    
+    industry_alerts = industry_alerts[(industry_alerts['RSI_1Y'] <= 25) | (industry_alerts['RSI_2Y'] <= 25)]
+
+    # --- OUTPUT ---
+    print("\n=== INDIVIDUAL STOCK ALERTS (RSI <= 25) ===")
+    print(stock_alerts if not stock_alerts.empty else "No individual stocks found.")
+
+    print("\n=== INDUSTRY SEGMENT ALERTS (Avg RSI <= 25) ===")
+    print(industry_alerts if not industry_alerts.empty else "No industry segments found.")
+
+if __name__ == "__main__":
+    run_tracker()
